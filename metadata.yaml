@@ -3,3 +3,4 @@ display_name: GPT 画图
 desc: Generate images with Shop API compatible image endpoints
 version: 1.0.0
 author: AImomo
+repo: https://github.com/momo0720/astrbot-gpt-image
