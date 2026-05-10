@@ -1,32 +1,99 @@
 # astrbot-gpt-image
 
-一个通过兼容 OpenAI Images 接口出图的 AstrBot 插件。
+可直接通过 AstrBot 插件仓库链接安装的独立插件仓库。
 
-## 特性
+## 安装方式
 
-- 支持文生图和图生图。
-- 支持模型列表、尺寸选项和多 Key 故障切换。
+### 方式一：通过 GitHub 链接安装
 
-## 安装
+在 AstrBot 插件安装界面中填入本仓库链接即可。
+
+### 方式二：手动安装
 
 1. 克隆或下载本仓库。
-2. 将 `gpt_image` 目录复制到 AstrBot 的插件目录中。
+2. 将仓库中的所有文件直接放入 AstrBot 的单个插件目录中。
 3. 在 AstrBot 插件配置页填写所需配置。
 4. 重启 AstrBot 或重载插件。
 
 ## 使用
 
 - 主命令：`/gpt画图`
-- 更多命令示例：见 `gpt_image/README.md`
-
-## 仓库结构
-
-- `gpt_image/main.py`
-- `gpt_image/_conf_schema.json`
-- `gpt_image/metadata.yaml`
-- `gpt_image/README.md`
+- 详细说明：见仓库内 `README.md` 下方内容
 
 ## 说明
 
+- `metadata.yaml`、`main.py`、`_conf_schema.json` 已放在仓库根目录，兼容 AstrBot 链接安装。
 - 已将本地敏感 API 地址和 Key 替换为占位内容（如适用）。
 - 不包含运行环境中的本地配置文件。
+
+---
+
+通过聊天命令调用兼容 OpenAI Images 接口的网关出图。
+
+当前命令前缀为 `gpt画图`。
+
+## 安装
+
+1. 将 `gpt_image` 目录复制到 AstrBot 的插件目录中。
+2. 在 AstrBot 插件配置页填写 `api_base_url`、`api_keys` / `api_key` 等配置。
+3. 重启 AstrBot 或重载插件后即可使用。
+
+## 命令
+
+- `/gpt画图 <提示词>`：默认方式出图，默认模型 `gpt-image-2` 不主动携带 `size` 参数
+- `/gpt画图 1k <提示词>`：自动附加 `size=1024x1024`
+- `/gpt画图 2k <提示词>`：自动附加 `size=2048x2048`
+- `/gpt画图 1 <提示词>`：使用模型列表中的第 1 个模型文生图
+- `/gpt画图 <提示词> + 图片`：自动走图生图
+- `/gpt画图 <提示词> + @群友`：自动读取被 @ 群友的 QQ 头像并走图生图，支持一次附带多个 @ 头像
+- `引用一张图片 + /gpt画图 <提示词>`：自动走图生图
+- `/gpt画图模型列表`：查询可用模型列表
+- `/gpt画图帮助`：查看帮助
+
+## 当前适配接口
+
+- API Base URL: `https://example.com`
+- 鉴权方式: `Authorization: Bearer <api-key>`
+- 模型列表接口: `GET /v1/models`
+- 文生图接口: `POST /v1/images/generations`
+- 图生图接口: `POST /v1/images/edits`
+- 默认模型: `gpt-image-2`
+
+## 尺寸参数规则
+
+- `/gpt画图 原神可莉` → 默认模型 `gpt-image-2` 不主动传 `size`
+- `/gpt画图 1k 原神可莉` → 自动附加 `size=1024x1024`
+- `/gpt画图 2k 原神可莉` → 自动附加 `size=2048x2048`
+
+模型别名 `gpt-image-2-1k`、`gpt-image-2-2k` 仍然保留兼容，但现在更推荐直接用命令参数 `1k` / `2k`。
+
+## 行为
+
+- 未发送图片时执行文生图
+- 发送图片、引用图片或 @ 群友时自动执行图生图
+- 图生图最多会提取 4 张参考图，来源可混合为引用图、直接图片和多个 @ 头像
+- 图生图使用 JSON 请求体，按 `images[].image_url` 传递 data URL
+- 插件会通过 `/v1/models` 获取模型列表
+- 模型列表会按缓存时间复用，默认缓存 `300` 秒
+- 若远端存在 `gpt-image-2`，插件会自动在列表中补充 `gpt-image-2-1k` 与 `gpt-image-2-2k`
+
+## 特性
+
+- 支持多个 API Key
+- 支持 `random` 随机或 `round_robin` 轮询 key 策略
+- 每个请求按策略选择 key 顺序
+- 支持接口返回 `b64_json` 或 `url`
+- 针对 `gpt-image-2` 的慢响应场景，默认超时提升到 `300` 秒
+- 默认关闭请求重试，避免单次失败后重复等待数分钟
+- 图片发送改为本地临时文件发送，避免大图 base64 导致 OneBot 超时
+
+## 返回消息
+
+成功出图时会返回：
+
+- 模式（文生图 / 图生图）
+- 模型
+- 尺寸参数（仅当本次请求实际携带了 `size` 时显示）
+- 使用的 key 编号
+- 本次耗时（从发送指令到生成结果）
+- 提示词

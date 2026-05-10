@@ -1,0 +1,54 @@
+{
+  "api_base_url": {
+    "description": "Shop API 基础地址，兼容 /models 与 /images/generations 接口",
+    "type": "string",
+    "default": "https://example.com"
+  },
+  "api_keys": {
+    "description": "多个 Shop API Key。当前 Key 失败后自动切换到下一个。",
+    "type": "list",
+    "default": [
+      "YOUR_API_KEY"
+    ]
+  },
+  "api_key": {
+    "description": "旧版单个 API Key。仅当 api_keys 为空时使用。",
+    "type": "string",
+    "default": "YOUR_API_KEY"
+  },
+  "text_model": {
+    "description": "文生图模型名称",
+    "type": "string",
+    "default": "gpt-image-2"
+  },
+  "size": {
+    "description": "文生图尺寸，例如 1024x1024",
+    "type": "string",
+    "default": "1024x1024"
+  },
+  "key_strategy": {
+    "description": "API Key 使用策略，可选 random 或 round_robin",
+    "type": "string",
+    "default": "random"
+  },
+  "models_cache_ttl": {
+    "description": "模型列表缓存时间（秒），避免每次都调用 /models 接口",
+    "type": "int",
+    "default": 300
+  },
+  "timeout": {
+    "description": "请求超时时间（秒）。gpt-image-2 出图较慢，建议至少 300 秒。",
+    "type": "int",
+    "default": 300
+  },
+  "request_retries": {
+    "description": "每个 Key 的请求重试次数。慢接口建议设为 0，避免重复等待。",
+    "type": "int",
+    "default": 0
+  },
+  "download_retries": {
+    "description": "图片下载重试次数",
+    "type": "int",
+    "default": 2
+  }
+}
