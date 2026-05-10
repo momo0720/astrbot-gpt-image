@@ -4,6 +4,12 @@
 
 当前命令前缀为 `gpt画图`。
 
+## 安装
+
+1. 将 `gpt_image` 目录复制到 AstrBot 的插件目录中。
+2. 在 AstrBot 插件配置页填写 `api_base_url`、`api_keys` / `api_key` 等配置。
+3. 重启 AstrBot 或重载插件后即可使用。
+
 ## 命令
 
 - `/gpt画图 <提示词>`：默认方式出图，默认模型 `gpt-image-2` 不主动携带 `size` 参数
