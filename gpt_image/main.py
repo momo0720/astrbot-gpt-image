@@ -55,15 +55,11 @@ class GptImagePlugin(Star):
             return "❌ 插件未配置文生图模型名称。"
         return None
 
-    def _normalize_model_name(self, model: str) -> str:
-        model = str(model).strip()
-        return model if model in self.MODEL_ALIASES else model
-
     def _resolve_model_payload(self, model: str) -> tuple[str, str | None]:
-        normalized = self._normalize_model_name(model)
-        if normalized in self.MODEL_ALIASES:
-            return "gpt-image-2", self.MODEL_ALIASES[normalized]
-        return normalized, None
+        model = str(model).strip()
+        if model in self.MODEL_ALIASES:
+            return "gpt-image-2", self.MODEL_ALIASES[model]
+        return model, None
 
     def _get_default_model(self) -> str:
         return str(self._cfg("text_model", "gpt-image-2")).strip() or "gpt-image-2"
@@ -93,67 +89,26 @@ class GptImagePlugin(Star):
             return value.strip().lower() in {"1", "true", "yes", "on", "启用", "开启"}
         return bool(value)
 
-    def _get_retry_cooldown_seconds(self) -> float:
-        return max(0.0, float(self._cfg("retry_cooldown_seconds", 3)))
+    def _select_api_key(self) -> tuple[int, str] | None:
+        indexed_keys = list(enumerate(self._get_api_keys(), start=1))
+        if not indexed_keys:
+            return None
+        if len(indexed_keys) == 1:
+            return indexed_keys[0]
+        if self._get_key_strategy() != "round_robin":
+            return random.choice(indexed_keys)
 
-    def _get_empty_result_retries(self) -> int:
-        return max(0, int(self._cfg("empty_result_retries", 2)))
-
-    def _get_http_502_retries(self) -> int:
-        return max(0, int(self._cfg("http_502_retries", 2)))
-
-    def _get_http_502_retry_cooldown_seconds(self) -> float:
-        return max(0.0, float(self._cfg("http_502_retry_cooldown_seconds", 3)))
-
-    def _get_transient_error_retries(self) -> int:
-        return max(
-            self._get_http_502_retries(),
-            max(0, int(self._cfg("transient_error_retries", 2))),
+        start_index = 0
+        if self._key_state_path.exists():
+            try:
+                start_index = int(self._key_state_path.read_text().strip())
+            except Exception:
+                start_index = 0
+        start_index %= len(indexed_keys)
+        self._key_state_path.write_text(
+            str((start_index + 1) % len(indexed_keys)), encoding="utf-8"
         )
-
-    def _get_transient_error_retry_cooldown_seconds(self) -> float:
-        return max(
-            self._get_http_502_retry_cooldown_seconds(),
-            max(0.0, float(self._cfg("transient_error_retry_cooldown_seconds", 5))),
-        )
-
-    def _is_stream_fallback_enabled(self) -> bool:
-        value = self._cfg("fallback_to_non_stream_on_stream_failure", True)
-        if isinstance(value, str):
-            return value.strip().lower() in {"1", "true", "yes", "on", "启用", "开启"}
-        return bool(value)
-
-    def _is_retryable_http_status(self, status: int) -> bool:
-        return status in {408, 409, 425, 429, 500, 502, 503, 504, 520, 522, 524}
-
-    def _get_send_retries(self) -> int:
-        return max(0, int(self._cfg("send_retries", 2)))
-
-    def _get_send_retry_cooldown_seconds(self) -> float:
-        return max(0.0, float(self._cfg("send_retry_cooldown_seconds", 2)))
-
-    def _get_ordered_api_keys(self) -> list[tuple[int, str]]:
-        api_keys = self._get_api_keys()
-        indexed_keys = list(enumerate(api_keys, start=1))
-        if len(indexed_keys) <= 1:
-            return indexed_keys
-
-        strategy = self._get_key_strategy()
-        if strategy == "round_robin":
-            start_index = 0
-            if self._key_state_path.exists():
-                try:
-                    start_index = int(self._key_state_path.read_text().strip())
-                except Exception:
-                    start_index = 0
-            start_index = start_index % len(indexed_keys)
-            ordered = indexed_keys[start_index:] + indexed_keys[:start_index]
-            next_index = (start_index + 1) % len(indexed_keys)
-            self._key_state_path.write_text(str(next_index), encoding="utf-8")
-            return ordered
-
-        random.shuffle(indexed_keys)
-        return indexed_keys
+        return indexed_keys[start_index]
 
     def _parse_prompt_model_and_quality(
         self, prompt: str, models: list[str]
@@ -276,20 +231,6 @@ class GptImagePlugin(Star):
                     return None, error
         return None, "未找到可用图片字段（b64_json/url）"
 
-    def _parse_stream_json_payload(self, text: str) -> dict | None:
-        text = text.strip()
-        if not text or text == "[DONE]":
-            return None
-        if text.startswith("data:"):
-            text = text[5:].strip()
-        if not text or text == "[DONE]":
-            return None
-        try:
-            return json.loads(text)
-        except json.JSONDecodeError:
-            logger.debug(f"Shop Image 忽略无法解析的流式片段: {text[:200]}")
-            return None
-
     def _parse_stream_event_payload(
         self, event_text: str
     ) -> tuple[str | None, dict | None]:
@@ -303,9 +244,14 @@ class GptImagePlugin(Star):
                 event_name = line[6:].strip()
             elif line.startswith("data:"):
                 data_lines.append(line[5:].strip())
-        if data_lines:
-            return event_name, self._parse_stream_json_payload("".join(data_lines))
-        return event_name, self._parse_stream_json_payload(event_text)
+        text = "".join(data_lines) if data_lines else event_text.strip()
+        if not text or text == "[DONE]":
+            return event_name, None
+        try:
+            return event_name, json.loads(text)
+        except json.JSONDecodeError:
+            logger.debug(f"Shop Image 忽略无法解析的流式片段: {text[:200]}")
+            return event_name, None
 
     async def _read_stream_image_response(
         self, session: aiohttp.ClientSession, resp: aiohttp.ClientResponse
@@ -376,23 +322,14 @@ class GptImagePlugin(Star):
     async def _download_image(
         self, session: aiohttp.ClientSession, url: str
     ) -> tuple[bytes | None, str | None]:
-        last_error = None
-        retries = int(self._cfg("download_retries", 2))
-        for attempt in range(retries + 1):
-            try:
-                async with session.get(url) as img_resp:
-                    if img_resp.status != 200:
-                        last_error = f"图片下载失败：HTTP {img_resp.status}"
-                    else:
-                        return await img_resp.read(), None
-            except Exception as e:
-                last_error = str(e)
-                logger.warning(
-                    f"Shop Image 图片下载异常，第 {attempt + 1}/{retries + 1} 次: {e}"
-                )
-            if attempt < retries:
-                await asyncio.sleep(1)
-        return None, last_error or "图片下载失败"
+        try:
+            async with session.get(url) as img_resp:
+                if img_resp.status != 200:
+                    return None, f"图片下载失败：HTTP {img_resp.status}"
+                return await img_resp.read(), None
+        except Exception as e:
+            logger.warning(f"Shop Image 图片下载异常: {e}")
+            return None, str(e) or "图片下载失败"
 
     def _save_image_to_temp_file(self, image_bytes: bytes, model: str) -> str:
         temp_dir = get_astrbot_temp_path()
@@ -404,43 +341,26 @@ class GptImagePlugin(Star):
         image.save(file_path, format="JPEG", quality=95)
         return file_path
 
-    async def _send_image_with_retry(
+    async def _send_image(
         self,
         event: AstrMessageEvent,
         *,
         summary_text: str,
         image_path: str,
     ) -> str | None:
-        send_retries = self._get_send_retries()
-        retry_cooldown_seconds = self._get_send_retry_cooldown_seconds()
-        last_error = None
+        try:
+            chain = MessageChain(
+                [Plain(summary_text), Image.fromFileSystem(image_path)]
+            )
+            await event.send(chain)
+            return None
+        except Exception as e:
+            logger.warning(f"Shop Image 发送图片失败: {e}")
+            return str(e) or repr(e) or "发送图片失败"
 
-        for attempt in range(send_retries + 1):
-            try:
-                chain = MessageChain(
-                    [Plain(summary_text), Image.fromFileSystem(image_path)]
-                )
-                await event.send(chain)
-                return None
-            except Exception as e:
-                last_error = str(e) or repr(e)
-                logger.warning(
-                    f"Shop Image 发送图片失败，第 {attempt + 1}/{send_retries + 1} 次: {last_error}"
-                )
-                if attempt < send_retries:
-                    await asyncio.sleep(retry_cooldown_seconds)
-
-        return last_error or "发送图片失败"
-
-    async def _fetch_models(
-        self, force_refresh: bool = False
-    ) -> tuple[list[str], str | None]:
+    async def _fetch_models(self) -> tuple[list[str], str | None]:
         now = time.time()
-        if (
-            not force_refresh
-            and self._models_cache
-            and now < self._models_cache_expires_at
-        ):
+        if self._models_cache and now < self._models_cache_expires_at:
             return list(self._models_cache), None
 
         base_url = self._cfg(
@@ -491,6 +411,56 @@ class GptImagePlugin(Star):
                 )
         return [], last_error or "获取模型列表失败"
 
+    def _build_image_payload(
+        self,
+        *,
+        prompt: str,
+        model: str,
+        source_images: list[bytes],
+        size_hint: str | None,
+        use_stream: bool,
+    ) -> dict:
+        payload = {"model": model, "prompt": prompt}
+        if source_images:
+            payload["images"] = [
+                {
+                    "image_url": (
+                        f"data:{self._detect_mime_type(image_bytes)};base64,"
+                        f"{base64.b64encode(image_bytes).decode()}"
+                    )
+                }
+                for image_bytes in source_images
+            ]
+        if size_hint:
+            payload["size"] = size_hint
+        if quality := self._get_image_quality():
+            payload["quality"] = quality
+        if output_format := self._get_output_format():
+            payload["output_format"] = output_format
+        if output_compression := self._get_output_compression():
+            payload["output_compression"] = output_compression
+        if use_stream:
+            payload["stream"] = True
+            payload["response_format"] = "url"
+            payload["partial_images"] = 1
+        return payload
+
+    def _format_api_error(
+        self, status: int, data: dict | None = None, text: str | None = None
+    ) -> str:
+        if text and text.lstrip().lower().startswith("<!doctype html"):
+            return (
+                f"上游服务暂时不可用或代理返回 HTML 错误页（HTTP {status}），请稍后重试"
+            )
+        error_obj = data.get("error") if isinstance(data, dict) else None
+        if isinstance(error_obj, dict) and error_obj.get("message"):
+            return str(error_obj["message"])
+        if isinstance(data, dict) and data.get("message"):
+            return str(data["message"])
+        if text:
+            return f"接口返回非 JSON：HTTP {status} {text[:300]}"
+        return f"HTTP {status}"
+
     async def _request_image_api(
         self,
         *,
@@ -502,280 +472,104 @@ class GptImagePlugin(Star):
         base_url = self._cfg(
             "api_base_url", "https://momo-gptplus.exe.xyz:8000"
         ).rstrip("/")
-        timeout_seconds = int(self._cfg("timeout", 300))
+        timeout_seconds = int(self._cfg("timeout", 600))
         timeout = aiohttp.ClientTimeout(
             total=timeout_seconds, sock_read=timeout_seconds
         )
-        retries = int(self._cfg("request_retries", 0))
-        empty_result_retries = self._get_empty_result_retries()
-        retry_cooldown_seconds = self._get_retry_cooldown_seconds()
-        transient_error_retries = self._get_transient_error_retries()
-        transient_error_retry_cooldown_seconds = (
-            self._get_transient_error_retry_cooldown_seconds()
-        )
-        ordered_api_keys = self._get_ordered_api_keys()
-        configured_stream = self._is_stream_image_generation_enabled()
-        stream_modes = [configured_stream]
-        if configured_stream and self._is_stream_fallback_enabled():
-            stream_modes.append(False)
+        selected_key = self._select_api_key()
+        if not selected_key:
+            return None, "❌ 插件未配置 API Key。", None, None
+        key_tag, api_key = selected_key
+        use_stream = self._is_stream_image_generation_enabled()
         resolved_model, size_hint = self._resolve_model_payload(model)
         source_images = source_images or []
         if size_override in {"1024x1024", "2048x2048"}:
             size_hint = size_override
         elif size_hint is None:
             size_hint = self._cfg("size", "1024x1024")
-        image_quality = self._get_image_quality()
-        output_format = self._get_output_format()
-        output_compression = self._get_output_compression()
-        last_error = None
 
-        for key_tag, api_key in ordered_api_keys:
-            for use_stream in stream_modes:
-                if configured_stream and not use_stream:
-                    logger.warning(
-                        f"Shop Image 流式请求失败后自动降级为非流式重试，key #{key_tag}/{len(ordered_api_keys)}"
+        endpoint_path = (
+            "/v1/images/edits" if source_images else "/v1/images/generations"
+        )
+        endpoint = f"{base_url}{endpoint_path}"
+        headers = {"Content-Type": "application/json"}
+        headers["Authorization"] = f"Bearer {api_key}"
+        payload = self._build_image_payload(
+            prompt=prompt,
+            model=resolved_model,
+            source_images=source_images,
+            size_hint=size_hint,
+            use_stream=use_stream,
+        )
+        try:
+            logger.info(
+                f"Shop Image 请求开始，model={resolved_model}，size={size_hint}，stream={use_stream}，参考图数量={len(source_images)}，key #{key_tag}，timeout={timeout_seconds}s"
+            )
+            async with aiohttp.ClientSession(timeout=timeout) as session:
+                async with session.post(
+                    endpoint, headers=headers, json=payload
+                ) as resp:
+                    if use_stream and resp.status == 200:
+                        image_bytes, error = await self._read_stream_image_response(
+                            session, resp
+                        )
+                        if image_bytes:
+                            return image_bytes, None, key_tag, size_hint
+                        return (
+                            None,
+                            error or "流式响应未返回可用图片数据",
+                            None,
+                            size_hint,
+                        )
+
+                    try:
+                        data = await resp.json()
+                        text = None
+                    except Exception:
+                        data = None
+                        text = await resp.text()
+
+                    if resp.status != 200:
+                        error = self._format_api_error(resp.status, data, text)
+                        if source_images and resp.status == 404:
+                            error = "当前 Shop API 不支持图生图接口 /images/edits"
+                        logger.warning(
+                            f"Shop Image 请求失败，model={resolved_model}，size={size_hint}，stream={use_stream}，key #{key_tag}，HTTP {resp.status}: {error}"
+                        )
+                        return None, error, None, size_hint
+
+                    if not isinstance(data, dict):
+                        return (
+                            None,
+                            self._format_api_error(resp.status, None, text),
+                            None,
+                            size_hint,
+                        )
+                    items = data.get("data") or []
+                    if not items:
+                        return None, "接口未返回图片数据", None, size_hint
+                    image_bytes, error = await self._extract_image_from_response_item(
+                        session, items[0]
                     )
-                for attempt in range(retries + 1):
-                    empty_retry_count = 0
-                    transient_retry_count = 0
-                    while True:
-                        try:
-                            logger.info(
-                                f"Shop Image 请求开始，model={resolved_model}，size={size_hint}，stream={use_stream}，参考图数量={len(source_images)}，key #{key_tag}/{len(ordered_api_keys)}，尝试 {attempt + 1}/{retries + 1}，空结果重试 {empty_retry_count + 1}/{empty_result_retries + 1}，临时错误重试 {transient_retry_count + 1}/{transient_error_retries + 1}"
-                            )
-                            async with aiohttp.ClientSession(
-                                timeout=timeout
-                            ) as session:
-                                headers = {
-                                    "Authorization": f"Bearer {api_key}",
-                                    "Content-Type": "application/json",
-                                }
-                                if source_images:
-                                    payload_images = []
-                                    for source_image in source_images:
-                                        mime_type = self._detect_mime_type(source_image)
-                                        image_data_url = (
-                                            f"data:{mime_type};base64,"
-                                            f"{base64.b64encode(source_image).decode()}"
-                                        )
-                                        payload_images.append(
-                                            {"image_url": image_data_url}
-                                        )
-                                    payload = {
-                                        "model": resolved_model,
-                                        "prompt": prompt,
-                                        "images": payload_images,
-                                    }
-                                    endpoint = f"{base_url}/v1/images/edits"
-                                else:
-                                    payload = {
-                                        "model": resolved_model,
-                                        "prompt": prompt,
-                                    }
-                                    endpoint = f"{base_url}/v1/images/generations"
-
-                                if size_hint:
-                                    payload["size"] = size_hint
-                                if image_quality:
-                                    payload["quality"] = image_quality
-                                if output_format:
-                                    payload["output_format"] = output_format
-                                if output_compression:
-                                    payload["output_compression"] = output_compression
-                                if use_stream:
-                                    payload["stream"] = True
-                                    payload["response_format"] = "url"
-
-                                async with session.post(
-                                    endpoint,
-                                    headers=headers,
-                                    json=payload,
-                                ) as resp:
-                                    if use_stream and resp.status == 200:
-                                        (
-                                            image_bytes_result,
-                                            error,
-                                        ) = await self._read_stream_image_response(
-                                            session, resp
-                                        )
-                                        if image_bytes_result:
-                                            return (
-                                                image_bytes_result,
-                                                None,
-                                                key_tag,
-                                                size_hint,
-                                            )
-                                        last_error = (
-                                            error or "流式响应未返回可用图片数据"
-                                        )
-                                        if empty_retry_count < empty_result_retries:
-                                            empty_retry_count += 1
-                                            logger.warning(
-                                                f"Shop Image 流式响应未拿到可用图片，{retry_cooldown_seconds} 秒后自动重试，key #{key_tag}/{len(ordered_api_keys)}，第 {empty_retry_count}/{empty_result_retries} 次，错误: {last_error}"
-                                            )
-                                            await asyncio.sleep(retry_cooldown_seconds)
-                                            continue
-                                        break
-
-                                    try:
-                                        data = await resp.json()
-                                    except Exception:
-                                        text = await resp.text()
-                                        content_type = resp.headers.get(
-                                            "Content-Type", ""
-                                        )
-                                        if "text/html" in content_type.lower():
-                                            last_error = f"上游服务暂时不可用或代理返回 HTML 错误页（HTTP {resp.status}），请稍后重试"
-                                            logger.warning(
-                                                f"Shop Image 收到 HTML 错误页: HTTP {resp.status} {text[:300]}"
-                                            )
-                                        else:
-                                            last_error = f"接口返回非 JSON：HTTP {resp.status} {text[:300]}"
-                                            logger.warning(
-                                                f"Shop Image 非 JSON 响应: {last_error}"
-                                            )
-                                        if (
-                                            self._is_retryable_http_status(resp.status)
-                                            and transient_retry_count
-                                            < transient_error_retries
-                                        ):
-                                            transient_retry_count += 1
-                                            logger.warning(
-                                                f"Shop Image 临时 HTTP {resp.status}，{transient_error_retry_cooldown_seconds} 秒后自动重试，key #{key_tag}/{len(ordered_api_keys)}，第 {transient_retry_count}/{transient_error_retries} 次"
-                                            )
-                                            await asyncio.sleep(
-                                                transient_error_retry_cooldown_seconds
-                                            )
-                                            continue
-                                        if attempt < retries:
-                                            await asyncio.sleep(1)
-                                            continue
-                                        break
-
-                                    if resp.status != 200:
-                                        error_obj = (
-                                            data.get("error")
-                                            if isinstance(data, dict)
-                                            else {}
-                                        )
-                                        if not isinstance(error_obj, dict):
-                                            error_obj = {}
-                                        last_error = (
-                                            error_obj.get("message")
-                                            or (
-                                                data.get("message")
-                                                if isinstance(data, dict)
-                                                else None
-                                            )
-                                            or f"HTTP {resp.status}"
-                                        )
-                                        if source_images and resp.status == 404:
-                                            last_error = "当前 Shop API 不支持图生图接口 /images/edits"
-                                        mode_name = (
-                                            "图生图" if source_images else "文生图"
-                                        )
-                                        logger.warning(
-                                            f"Shop Image {mode_name}失败，model={resolved_model}，size={size_hint}，stream={use_stream}，key #{key_tag}/{len(ordered_api_keys)}，HTTP {resp.status}: {last_error}"
-                                        )
-                                        if (
-                                            self._is_retryable_http_status(resp.status)
-                                            and transient_retry_count
-                                            < transient_error_retries
-                                        ):
-                                            transient_retry_count += 1
-                                            logger.warning(
-                                                f"Shop Image 临时 HTTP {resp.status}，{transient_error_retry_cooldown_seconds} 秒后自动重试，key #{key_tag}/{len(ordered_api_keys)}，第 {transient_retry_count}/{transient_error_retries} 次，错误: {last_error}"
-                                            )
-                                            await asyncio.sleep(
-                                                transient_error_retry_cooldown_seconds
-                                            )
-                                            continue
-                                        if attempt < retries:
-                                            await asyncio.sleep(1)
-                                            continue
-                                        break
-
-                                    items = data.get("data") or []
-                                    if not items:
-                                        last_error = "接口未返回图片数据"
-                                        if empty_retry_count < empty_result_retries:
-                                            empty_retry_count += 1
-                                            logger.warning(
-                                                f"Shop Image 接口返回空图片数据，{retry_cooldown_seconds} 秒后自动重试，key #{key_tag}/{len(ordered_api_keys)}，第 {empty_retry_count}/{empty_result_retries} 次"
-                                            )
-                                            await asyncio.sleep(retry_cooldown_seconds)
-                                            continue
-                                        if attempt < retries:
-                                            await asyncio.sleep(1)
-                                            continue
-                                        break
-
-                                    item = items[0]
-                                    (
-                                        image_bytes_result,
-                                        error,
-                                    ) = await self._extract_image_from_response_item(
-                                        session, item
-                                    )
-                                    if image_bytes_result:
-                                        return (
-                                            image_bytes_result,
-                                            None,
-                                            key_tag,
-                                            size_hint,
-                                        )
-                                    last_error = (
-                                        error or "未找到可用图片字段（b64_json/url）"
-                                    )
-
-                                if empty_retry_count < empty_result_retries:
-                                    empty_retry_count += 1
-                                    logger.warning(
-                                        f"Shop Image 返回结果缺少图片字段，{retry_cooldown_seconds} 秒后自动重试，key #{key_tag}/{len(ordered_api_keys)}，第 {empty_retry_count}/{empty_result_retries} 次，错误: {last_error}"
-                                    )
-                                    await asyncio.sleep(retry_cooldown_seconds)
-                                    continue
-                                if attempt < retries:
-                                    await asyncio.sleep(1)
-                                    continue
-                                break
-                        except asyncio.TimeoutError:
-                            last_error = f"请求超时（>{timeout_seconds}秒）"
-                            logger.warning(
-                                f"Shop Image 请求超时，model={model}，stream={use_stream}，key #{key_tag}/{len(ordered_api_keys)}，尝试 {attempt + 1}/{retries + 1}，timeout={timeout_seconds}s"
-                            )
-                            if transient_retry_count < transient_error_retries:
-                                transient_retry_count += 1
-                                logger.warning(
-                                    f"Shop Image 超时后 {transient_error_retry_cooldown_seconds} 秒自动重试，key #{key_tag}/{len(ordered_api_keys)}，第 {transient_retry_count}/{transient_error_retries} 次"
-                                )
-                                await asyncio.sleep(
-                                    transient_error_retry_cooldown_seconds
-                                )
-                                continue
-                            if attempt < retries:
-                                await asyncio.sleep(1)
-                                continue
-                        except Exception as e:
-                            last_error = str(e) or repr(e)
-                            logger.warning(
-                                f"Shop Image 请求异常，model={model}，stream={use_stream}，key #{key_tag}/{len(ordered_api_keys)}，尝试 {attempt + 1}/{retries + 1}: {last_error}"
-                            )
-                            if transient_retry_count < transient_error_retries:
-                                transient_retry_count += 1
-                                logger.warning(
-                                    f"Shop Image 异常后 {transient_error_retry_cooldown_seconds} 秒自动重试，key #{key_tag}/{len(ordered_api_keys)}，第 {transient_retry_count}/{transient_error_retries} 次，错误: {last_error}"
-                                )
-                                await asyncio.sleep(
-                                    transient_error_retry_cooldown_seconds
-                                )
-                                continue
-                            if attempt < retries:
-                                await asyncio.sleep(1)
-                                continue
-                        break
-            logger.warning(f"Shop Image 切换下一个 key，当前错误: {last_error}")
-        return None, last_error or "画图请求失败", None, size_hint
+                    if image_bytes:
+                        return image_bytes, None, key_tag, size_hint
+                    return (
+                        None,
+                        error or "未找到可用图片字段（b64_json/url）",
+                        None,
+                        size_hint,
+                    )
+        except asyncio.TimeoutError:
+            logger.warning(
+                f"Shop Image 请求超时，model={model}，stream={use_stream}，key #{key_tag}，timeout={timeout_seconds}s"
+            )
+            return None, f"请求超时（>{timeout_seconds}秒）", None, size_hint
+        except Exception as e:
+            error = str(e) or repr(e)
+            logger.warning(
+                f"Shop Image 请求异常，model={model}，stream={use_stream}，key #{key_tag}: {error}"
+            )
+            return None, error, None, size_hint
 
     @filter.command("gpt画图帮助")
     async def draw_help(self, event: AstrMessageEvent):
@@ -793,7 +587,7 @@ class GptImagePlugin(Star):
             f"质量：{self._get_image_quality() or '默认'}\n"
             f"输出格式：{self._get_output_format() or '默认'}\n"
             f"画图请求模式：{'流式' if self._is_stream_image_generation_enabled() else '非流式'}\n"
-            "特性：支持多个 API Key、失败自动重试并切换 Key"
+            "特性：支持多个 API Key、流式/非流式画图"
         )
 
     @filter.command("gpt画图模型列表")
@@ -865,7 +659,7 @@ class GptImagePlugin(Star):
             image_path = self._save_image_to_temp_file(image_bytes, model)
             size_line = f"\n尺寸参数：{size_hint}" if size_hint else ""
             summary_text = f"🖼️ 模式：{mode}\n模型：{model}{size_line}\n使用：{key_tag}\n耗时：{elapsed_seconds:.2f}秒\n提示词：{prompt}"
-            send_error = await self._send_image_with_retry(
+            send_error = await self._send_image(
                 event,
                 summary_text=summary_text,
                 image_path=image_path,

@@ -5,7 +5,7 @@
     "default": "https://example.com"
   },
   "api_keys": {
-    "description": "多个 Shop API Key。当前 Key 失败后自动切换到下一个。",
+    "description": "多个 Shop API Key。每次请求按 key_strategy 选择其中一个。",
     "type": "list",
     "default": [
       "YOUR_API_KEY"
@@ -42,12 +42,12 @@
     "default": 75
   },
   "stream_image_generation": {
-    "description": "是否使用流式画图。打开=请求时携带 stream=true 并按 SSE 流式结果解析；关闭=非流式普通 JSON 响应。",
+    "description": "是否使用流式画图。打开=stream=true 并按 SSE 读取 completed；关闭=非流式 JSON 响应。",
     "type": "bool",
-    "default": false
+    "default": true
   },
   "key_strategy": {
-    "description": "API Key 使用策略，可选 random 或 round_robin",
+    "description": "API Key 选择策略，可选 random 或 round_robin",
     "type": "string",
     "default": "random"
   },
@@ -57,63 +57,8 @@
     "default": 300
   },
   "timeout": {
-    "description": "请求超时时间（秒）。gpt-image-2 出图较慢，默认 600 秒；超时后直接失败。",
+    "description": "请求超时时间（秒）。默认 600 秒；超时后直接失败，不自动重试。",
     "type": "int",
     "default": 600
-  },
-  "request_retries": {
-    "description": "每个 Key 的请求重试次数。默认 0，超时或失败后不做整轮重试。",
-    "type": "int",
-    "default": 0
-  },
-  "download_retries": {
-    "description": "图片下载重试次数",
-    "type": "int",
-    "default": 2
-  },
-  "empty_result_retries": {
-    "description": "接口成功返回但没有拿到可用图片时的自动重试次数。默认 0，避免等待过久。",
-    "type": "int",
-    "default": 0
-  },
-  "retry_cooldown_seconds": {
-    "description": "空结果自动重试前的冷却时间（秒）",
-    "type": "int",
-    "default": 3
-  },
-  "http_502_retries": {
-    "description": "兼容旧配置：遇到 HTTP 502 时的自动重试次数。默认 0。",
-    "type": "int",
-    "default": 0
-  },
-  "http_502_retry_cooldown_seconds": {
-    "description": "兼容旧配置：HTTP 502 自动重试前的冷却时间（秒）；实际会并入临时错误冷却时间",
-    "type": "int",
-    "default": 3
-  },
-  "transient_error_retries": {
-    "description": "遇到临时错误时的自动重试次数，包括超时、429、5xx、520/522/524、非 JSON 网关错误等。默认 0，超时直接失败。",
-    "type": "int",
-    "default": 0
-  },
-  "transient_error_retry_cooldown_seconds": {
-    "description": "临时错误自动重试前的冷却时间（秒）",
-    "type": "int",
-    "default": 5
-  },
-  "fallback_to_non_stream_on_stream_failure": {
-    "description": "流式画图失败后是否自动降级为非流式再试。建议打开，可减少流式网关波动导致的失败。",
-    "type": "bool",
-    "default": true
-  },
-  "send_retries": {
-    "description": "收到出图结果后，发送图片消息失败时的自动重试次数",
-    "type": "int",
-    "default": 2
-  },
-  "send_retry_cooldown_seconds": {
-    "description": "发送图片失败后的重试冷却时间（秒）",
-    "type": "int",
-    "default": 2
   }
 }
