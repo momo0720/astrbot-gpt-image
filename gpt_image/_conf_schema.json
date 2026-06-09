@@ -26,6 +26,11 @@
     "type": "string",
     "default": "1024x1024"
   },
+  "stream_image_generation": {
+    "description": "是否使用流式画图。打开=请求时携带 stream=true 并按 SSE 流式结果解析；关闭=非流式普通 JSON 响应。",
+    "type": "bool",
+    "default": false
+  },
   "key_strategy": {
     "description": "API Key 使用策略，可选 random 或 round_robin",
     "type": "string",
@@ -48,6 +53,36 @@
   },
   "download_retries": {
     "description": "图片下载重试次数",
+    "type": "int",
+    "default": 2
+  },
+  "empty_result_retries": {
+    "description": "接口成功返回但没有拿到可用图片时的自动重试次数",
+    "type": "int",
+    "default": 2
+  },
+  "retry_cooldown_seconds": {
+    "description": "空结果自动重试前的冷却时间（秒）",
+    "type": "int",
+    "default": 3
+  },
+  "http_502_retries": {
+    "description": "遇到 HTTP 502（如 stream disconnected before completion）时的自动重试次数",
+    "type": "int",
+    "default": 2
+  },
+  "http_502_retry_cooldown_seconds": {
+    "description": "HTTP 502 自动重试前的冷却时间（秒）",
+    "type": "int",
+    "default": 3
+  },
+  "send_retries": {
+    "description": "收到出图结果后，发送图片消息失败时的自动重试次数",
+    "type": "int",
+    "default": 2
+  },
+  "send_retry_cooldown_seconds": {
+    "description": "发送图片失败后的重试冷却时间（秒）",
     "type": "int",
     "default": 2
   }
