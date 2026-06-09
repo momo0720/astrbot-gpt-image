@@ -67,14 +67,29 @@
     "default": 3
   },
   "http_502_retries": {
-    "description": "遇到 HTTP 502（如 stream disconnected before completion）时的自动重试次数",
+    "description": "兼容旧配置：遇到 HTTP 502 时的自动重试次数；实际会并入临时错误重试次数",
     "type": "int",
     "default": 2
   },
   "http_502_retry_cooldown_seconds": {
-    "description": "HTTP 502 自动重试前的冷却时间（秒）",
+    "description": "兼容旧配置：HTTP 502 自动重试前的冷却时间（秒）；实际会并入临时错误冷却时间",
     "type": "int",
     "default": 3
+  },
+  "transient_error_retries": {
+    "description": "遇到临时错误时的自动重试次数，包括超时、429、5xx、520/522/524、非 JSON 网关错误等",
+    "type": "int",
+    "default": 2
+  },
+  "transient_error_retry_cooldown_seconds": {
+    "description": "临时错误自动重试前的冷却时间（秒）",
+    "type": "int",
+    "default": 5
+  },
+  "fallback_to_non_stream_on_stream_failure": {
+    "description": "流式画图失败后是否自动降级为非流式再试。建议打开，可减少流式网关波动导致的失败。",
+    "type": "bool",
+    "default": true
   },
   "send_retries": {
     "description": "收到出图结果后，发送图片消息失败时的自动重试次数",
