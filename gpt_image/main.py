@@ -75,6 +75,18 @@ class GptImagePlugin(Star):
         strategy = str(self._cfg("key_strategy", "random")).strip().lower()
         return strategy if strategy in {"random", "round_robin"} else "random"
 
+    def _get_image_quality(self) -> str | None:
+        quality = str(self._cfg("image_quality", "low")).strip().lower()
+        return quality or None
+
+    def _get_output_format(self) -> str | None:
+        output_format = str(self._cfg("output_format", "jpeg")).strip().lower()
+        return output_format or None
+
+    def _get_output_compression(self) -> int | None:
+        compression = int(self._cfg("output_compression", 75) or 0)
+        return compression if compression > 0 else None
+
     def _is_stream_image_generation_enabled(self) -> bool:
         value = self._cfg("stream_image_generation", False)
         if isinstance(value, str):
@@ -510,8 +522,11 @@ class GptImagePlugin(Star):
         source_images = source_images or []
         if size_override in {"1024x1024", "2048x2048"}:
             size_hint = size_override
-        elif size_hint is None and resolved_model != "gpt-image-2":
+        elif size_hint is None:
             size_hint = self._cfg("size", "1024x1024")
+        image_quality = self._get_image_quality()
+        output_format = self._get_output_format()
+        output_compression = self._get_output_compression()
         last_error = None
 
         for key_tag, api_key in ordered_api_keys:
@@ -561,6 +576,12 @@ class GptImagePlugin(Star):
 
                                 if size_hint:
                                     payload["size"] = size_hint
+                                if image_quality:
+                                    payload["quality"] = image_quality
+                                if output_format:
+                                    payload["output_format"] = output_format
+                                if output_compression:
+                                    payload["output_compression"] = output_compression
                                 if use_stream:
                                     payload["stream"] = True
                                     payload["response_format"] = "url"
@@ -600,10 +621,19 @@ class GptImagePlugin(Star):
                                         data = await resp.json()
                                     except Exception:
                                         text = await resp.text()
-                                        last_error = f"接口返回非 JSON：HTTP {resp.status} {text[:300]}"
-                                        logger.warning(
-                                            f"Shop Image 非 JSON 响应: {last_error}"
+                                        content_type = resp.headers.get(
+                                            "Content-Type", ""
                                         )
+                                        if "text/html" in content_type.lower():
+                                            last_error = f"上游服务暂时不可用或代理返回 HTML 错误页（HTTP {resp.status}），请稍后重试"
+                                            logger.warning(
+                                                f"Shop Image 收到 HTML 错误页: HTTP {resp.status} {text[:300]}"
+                                            )
+                                        else:
+                                            last_error = f"接口返回非 JSON：HTTP {resp.status} {text[:300]}"
+                                            logger.warning(
+                                                f"Shop Image 非 JSON 响应: {last_error}"
+                                            )
                                         if (
                                             self._is_retryable_http_status(resp.status)
                                             and transient_retry_count
@@ -759,6 +789,9 @@ class GptImagePlugin(Star):
             f"默认模型：{self._get_default_model()}\n"
             f"模型列表缓存：{self._get_models_cache_ttl()} 秒\n"
             f"Key 策略：{self._get_key_strategy()}\n"
+            f"默认尺寸：{self._cfg('size', '1024x1024')}\n"
+            f"质量：{self._get_image_quality() or '默认'}\n"
+            f"输出格式：{self._get_output_format() or '默认'}\n"
             f"画图请求模式：{'流式' if self._is_stream_image_generation_enabled() else '非流式'}\n"
             "特性：支持多个 API Key、失败自动重试并切换 Key"
         )
