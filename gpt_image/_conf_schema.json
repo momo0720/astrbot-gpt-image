@@ -27,19 +27,14 @@
     "default": "1024x1024"
   },
   "image_quality": {
-    "description": "画图质量参数。想更快建议 low；如接口不支持可留空。",
+    "description": "画图质量参数，默认 high；如接口不支持可留空。",
     "type": "string",
-    "default": "low"
+    "default": "high"
   },
   "output_format": {
-    "description": "输出图片格式。jpeg 体积更小、发送更快；可选 jpeg/png/webp，留空则不传。",
+    "description": "输出图片格式，默认使用无损 PNG；可选 jpeg/png/webp。",
     "type": "string",
-    "default": "jpeg"
-  },
-  "output_compression": {
-    "description": "输出图片压缩率，仅部分格式/接口支持。jpeg/webp 建议 75；设为 0 则不传。",
-    "type": "int",
-    "default": 75
+    "default": "png"
   },
   "stream_image_generation": {
     "description": "是否使用流式画图。打开=stream=true 并按 SSE 读取 completed；关闭=非流式 JSON 响应。",

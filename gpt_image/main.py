@@ -1,13 +1,11 @@
 import asyncio
 import base64
-import io
 import json
 import random
 import time
 from pathlib import Path
 
 import aiohttp
-from PIL import Image as PILImage
 
 from astrbot.api import logger
 from astrbot.api.event import AstrMessageEvent, filter
@@ -72,16 +70,12 @@ class GptImagePlugin(Star):
         return strategy if strategy in {"random", "round_robin"} else "random"
 
     def _get_image_quality(self) -> str | None:
-        quality = str(self._cfg("image_quality", "low")).strip().lower()
+        quality = str(self._cfg("image_quality", "high")).strip().lower()
         return quality or None
 
     def _get_output_format(self) -> str | None:
-        output_format = str(self._cfg("output_format", "jpeg")).strip().lower()
+        output_format = str(self._cfg("output_format", "png")).strip().lower()
         return output_format or None
-
-    def _get_output_compression(self) -> int | None:
-        compression = int(self._cfg("output_compression", 75) or 0)
-        return compression if compression > 0 else None
 
     def _is_stream_image_generation_enabled(self) -> bool:
         value = self._cfg("stream_image_generation", False)
@@ -332,14 +326,19 @@ class GptImagePlugin(Star):
             return None, str(e) or "图片下载失败"
 
     def _save_image_to_temp_file(self, image_bytes: bytes, model: str) -> str:
-        temp_dir = get_astrbot_temp_path()
-        file_path = (
-            f"{temp_dir}/shop_image_{model}_{int(time.time() * 1000)}_"
-            f"{random.randint(1000, 9999)}.jpg"
+        mime_type = self._detect_mime_type(image_bytes)
+        extension = {
+            "image/png": ".png",
+            "image/jpeg": ".jpg",
+            "image/gif": ".gif",
+            "image/webp": ".webp",
+        }.get(mime_type, ".img")
+        file_path = Path(get_astrbot_temp_path()) / (
+            f"shop_image_{model}_{int(time.time() * 1000)}_"
+            f"{random.randint(1000, 9999)}{extension}"
         )
-        image = PILImage.open(io.BytesIO(image_bytes)).convert("RGB")
-        image.save(file_path, format="JPEG", quality=95)
-        return file_path
+        file_path.write_bytes(image_bytes)
+        return str(file_path)
 
     async def _send_image(
         self,
@@ -437,8 +436,6 @@ class GptImagePlugin(Star):
             payload["quality"] = quality
         if output_format := self._get_output_format():
             payload["output_format"] = output_format
-        if output_compression := self._get_output_compression():
-            payload["output_compression"] = output_compression
         if use_stream:
             payload["stream"] = True
             payload["response_format"] = "url"
